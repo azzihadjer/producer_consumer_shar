@@ -1,54 +1,77 @@
 #include "shared.h"
-#include <sys/sem.h>
-#include <sys/shm.h>
-#include <unistd.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
+#include <unistd.h> // Add this line for ftruncate and close
 
-shared_data* initialize_shared_memory(int *shmid) {
+int *buffer;
+int *count;
+sem_t *empty, *full;
+pthread_mutex_t *mutex;
 
-    *shmid = shmget(SHM_KEY, sizeof(shared_data), IPC_CREAT | 0666);
-    if (*shmid < 0) {
-        perror("shmget");
-        exit(1);
+void setup_shared_memory() {
+    int fd;
+
+    fd = shm_open(BUFFER_NAME, O_CREAT | O_RDWR, 0666);
+    ftruncate(fd, N * sizeof(int)); // Ensures buffer has enough space
+    buffer = mmap(NULL, N * sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    close(fd);
+
+    fd = shm_open(COUNT_NAME, O_CREAT | O_RDWR, 0666);
+    ftruncate(fd, sizeof(int)); // Ensures count has enough space
+    count = mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    close(fd);
+
+    empty = sem_open(EMPTY_SEM, O_CREAT, 0666, N);
+    full = sem_open(FULL_SEM, O_CREAT, 0666, 0);
+
+    fd = shm_open(MUTEX_NAME, O_CREAT | O_RDWR, 0666);
+    ftruncate(fd, sizeof(pthread_mutex_t)); // Ensures mutex has enough space
+    mutex = mmap(NULL, sizeof(pthread_mutex_t), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    close(fd);
+
+    pthread_mutexattr_t mutex_attr;
+    pthread_mutexattr_init(&mutex_attr);
+    pthread_mutexattr_setpshared(&mutex_attr, PTHREAD_PROCESS_SHARED);
+    pthread_mutex_init(mutex, &mutex_attr);
+
+    *count = 0;
+    for (int i = 0; i < N; i++) {
+        buffer[i] = -1;
     }
+}
 
-   
-    shared_data* data = (shared_data*) shmat(*shmid, NULL, 0);
-    if (data == (void*) -1) {
-        perror("shmat");
-        exit(1);
+void print_buffer(const char *label) {
+    time_t now;
+    time(&now);
+    char *time_str = ctime(&now);
+    time_str[strcspn(time_str, "\n")] = '\0';
+    printf("[%s] %s [ ", time_str, label);
+    for (int i = 0; i < N; i++) {
+        if (buffer[i] == -1) {
+            printf("_ ");
+        } else {
+            printf("%d ", buffer[i]);
+        }
     }
-
-   
-    data->in = 0;
-    data->out = 0;
-    memset(data->buffer, 0, BUFFER_SIZE * sizeof(int));
-
-    return data;
+    printf("]\n");
+    // Only print an additional newline if label is "after"
+    if (strcmp(label, "after") == 0) {
+        printf("\n");
+    }
 }
 
-void initialize_semaphores(int semid) {
-    // Initialize semaphores: empty = BUFFER_SIZE, full = 0, mutex = 1
-    semctl(semid, SEM_EMPTY, SETVAL, BUFFER_SIZE);
-    semctl(semid, SEM_FULL, SETVAL, 0);
-    semctl(semid, SEM_MUTEX, SETVAL, 1);
-}
+void cleanup_shared_memory() {
+    sem_close(empty);
+    sem_close(full);
+    sem_unlink(EMPTY_SEM);
+    sem_unlink(FULL_SEM);
 
-void cleanup_shared_memory(int shmid, shared_data* data) {
-    shmdt(data);  
-    shmctl(shmid, IPC_RMID, NULL);  
-}
+    pthread_mutex_destroy(mutex);
 
-void cleanup_semaphores(int semid) {
-    semctl(semid, 0, IPC_RMID);
-}
-
-void sem_wait(int semid, int sem_num) {
-    struct sembuf operation = {sem_num, -1, 0};
-    semop(semid, &operation, 1); 
-}
-
-void sem_signal(int semid, int sem_num) {
-    struct sembuf operation = {sem_num, 1, 0};
-    semop(semid, &operation, 1);  
+    shm_unlink(BUFFER_NAME);
+    shm_unlink(COUNT_NAME);
+    shm_unlink(MUTEX_NAME);
 }
