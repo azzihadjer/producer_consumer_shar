@@ -1,44 +1,50 @@
-#include "shared.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include "shared.h"
 
-int count_items_in_buffer(shared_data* data) {
-    int count = 0;
-    for (int i = 0; i < BUFFER_SIZE; i++) {
-        if (data->buffer[i] != 0) {  // Assuming 0 means the slot is empty
-            count++;
+void consumer() {
+    int item;
+    for (int i = 0; i < 10; i++) { // Consume 10 items for this example
+        // Check if the buffer is empty
+        if (sem_trywait(full) != 0) {
+            printf("Consumer waiting, buffer is empty...\n");
+            sem_wait(full); // Wait for a full slot
         }
+
+        pthread_mutex_lock(mutex); // Lock the buffer
+
+        printf("Consumer arrived, buffer before: ");
+        print_buffer("before"); // Print buffer before removing item
+
+        // Remove item from the buffer
+        item = buffer[0];
+        printf("Consumer consumed: %d\n", item);
+
+        // Shift all items in the buffer to the left
+        for (int j = 0; j < *count - 1; j++) {
+            buffer[j] = buffer[j + 1];
+        }
+        buffer[*count - 1] = -1; // Mark the last position as empty
+        (*count)--;
+
+        printf("Buffer after: ");
+        print_buffer("after"); // Print buffer after removing item
+
+        pthread_mutex_unlock(mutex); // Unlock the buffer
+        sem_post(empty); // Signal that there’s an empty slot
+
+        sleep(1); // Simulate time taken to consume
     }
-    return count;
 }
 
 int main() {
-    int shmid;
-    shared_data* data = initialize_shared_memory(&shmid);  // Initialize shared memory
+    setup_shared_memory();
 
-    // Initialize semaphores
-    int semid = semget(SEM_KEY, 3, IPC_CREAT | 0666);
-    
-    while (1) {
-        sem_wait(semid, SEM_FULL);  
-        sem_wait(semid, SEM_MUTEX);  
+    consumer();
 
-        
-        int item = data->buffer[data->out];
-         printf("Consumer consume item %d from position %d\n", item+1, data->out);
-        data->buffer[data->out] = 0;  
-        data->out = (data->out + 1) % BUFFER_SIZE;  
-
-        
-        int num_items = count_items_in_buffer(data);
-        printf("Number of items in the buffer after consuming: %d\n", num_items);
-
-        sem_signal(semid, SEM_MUTEX);  
-        sem_signal(semid, SEM_EMPTY);  
-
-        sleep(2);  
-    }
-
-    cleanup_shared_memory(shmid, data);  // Cleanup shared memory
+    cleanup_shared_memory();
     return 0;
 }
