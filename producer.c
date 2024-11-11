@@ -1,49 +1,46 @@
-#include "shared.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <time.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include "shared.h"
 
-int count_items_in_buffer(shared_data* data) {
-    int count = 0;
-    for (int i = 0; i < BUFFER_SIZE; i++) {
-        if (data->buffer[i] != 0) {  // Assuming 0 means the slot is empty
-            count++;
+void producer() {
+    int item;
+    for (int i = 0; i < 10; i++) { // Produce 10 items for this example
+        item = rand() % 100; // Produce an item
+
+        // Check if the buffer is full
+        if (sem_trywait(empty) != 0) {
+            printf("Producer waiting, buffer is full...\n");
+            sem_wait(empty); // Wait for an empty slot
         }
+
+        pthread_mutex_lock(mutex); // Lock the buffer
+
+        printf("Producer arrived, buffer before: ");
+        print_buffer("before"); // Print buffer before adding item
+
+        // Add item to the buffer
+        buffer[*count] = item;
+        printf("Producer produced: %d\n", item);
+        (*count)++;
+
+        printf("Buffer after: ");
+        print_buffer("after"); // Print buffer after adding item
+
+        pthread_mutex_unlock(mutex); // Unlock the buffer
+        sem_post(full); // Signal that there’s a new full slot
+
+        usleep(200000); // Simulate time taken to produce
     }
-    return count;
 }
 
 int main() {
-    int shmid;
-    shared_data* data = initialize_shared_memory(&shmid);  
+    setup_shared_memory();
 
-    // Initialize semaphores
-    int semid = semget(SEM_KEY, 3, IPC_CREAT | 0666);
-    initialize_semaphores(semid);
+    producer();
 
-    srand(time(NULL));  
-
-    while (1) {
-        int item = rand() % 100;  
-
-        sem_wait(semid, SEM_EMPTY);  
-        sem_wait(semid, SEM_MUTEX); 
-
-        data->buffer[data->in] = item;
-         printf("Producer produce item %d from position %d\n", item, data->in);
-        data->in = (data->in + 1) % BUFFER_SIZE;  
-
-        
-        int num_items = count_items_in_buffer(data);
-        printf("Number of items in the buffer after producing: %d\n", num_items);
-
-        sem_signal(semid, SEM_MUTEX); 
-        sem_signal(semid, SEM_FULL);   
-
-        sleep(1);  
-    }
-
-    cleanup_shared_memory(shmid, data);  
+    cleanup_shared_memory();
     return 0;
 }
