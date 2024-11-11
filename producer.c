@@ -1,46 +1,29 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <sys/mman.h>
-#include "shared.h"
+// shared.h
 
-void producer() {
-    int item;
-    for (int i = 0; i < 10; i++) { // Produce 10 items for this example
-        item = rand() % 100; // Produce an item
+#ifndef SHARED_H
+#define SHARED_H
 
-        // Check if the buffer is full
-        if (sem_trywait(empty) != 0) {
-            printf("Producer waiting, buffer is full...\n");
-            sem_wait(empty); // Wait for an empty slot
-        }
+#include <semaphore.h>
+#include <pthread.h>
 
-        pthread_mutex_lock(mutex); // Lock the buffer
+#define N 4 // Buffer size
 
-        printf("Producer arrived, buffer before: ");
-        print_buffer("before"); // Print buffer before adding item
+// Shared memory object names
+#define BUFFER_NAME "/buffer"
+#define COUNT_NAME "/count"
+#define EMPTY_SEM "/empty_sem"
+#define FULL_SEM "/full_sem"
+#define MUTEX_NAME "/mutex"
 
-        // Add item to the buffer
-        buffer[*count] = item;
-        printf("Producer produced: %d\n", item);
-        (*count)++;
+extern int *buffer;
+extern int *count;
+extern sem_t *empty, *full;
+extern pthread_mutex_t *mutex;
 
-        printf("Buffer after: ");
-        print_buffer("after"); // Print buffer after adding item
+void setup_shared_memory();
+void cleanup_shared_memory();
 
-        pthread_mutex_unlock(mutex); // Unlock the buffer
-        sem_post(full); // Signal that there’s a new full slot
+// Add the declaration for print_buffer
+void print_buffer(const char *label);
 
-        usleep(200000); // Simulate time taken to produce
-    }
-}
-
-int main() {
-    setup_shared_memory();
-
-    producer();
-
-    cleanup_shared_memory();
-    return 0;
-}
+#endif
